@@ -2,6 +2,7 @@ import json
 import time
 import os
 import requests
+import random
 from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
 
@@ -12,79 +13,93 @@ LIKE_THRESHOLD = 50  # 预警阈值
 # ============================================================
 
 def get_video_list_with_browser():
-    """使用 Playwright 模拟浏览器抓取，绕过 WBI 签名和 412 风控"""
+    """使用 Playwright 增强模拟抓取，加入 Cookie 注入和防爬增强"""
     if not BILI_UID:
         print("错误：未检测到 BILI_UID")
         return []
 
     videos = []
-    print(f"正在启动模拟浏览器，目标 UID: {BILI_UID}")
+    print(f"正在启动增强型模拟浏览器，目标 UID: {BILI_UID}")
 
     with sync_playwright() as p:
-        # 启动无头浏览器
+        # 使用真实的浏览器配置
         browser = p.chromium.launch(headless=True)
-        # 模拟真实设备指纹
+        # 伪造更像真实用户的 Context
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            viewport={'width': 1920, 'height': 1080}
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            viewport={'width': 1920, 'height': 1080},
+            locale="zh-CN",
+            timezone_id="Asia/Shanghai"
         )
         page = context.new_page()
 
         try:
-            # 1. 先访问用户空间主页，获取必要的 Cookie 环境
-            print(f"正在访问用户空间: https://space.bilibili.com/{BILI_UID}/video")
-            page.goto(f"https://space.bilibili.com/{BILI_UID}/video", wait_until="networkidle", timeout=60000)
-            time.sleep(5) # 等待页面渲染和脚本执行
+            # 1. 第一步：访问 B 站首页，建立基础 Session 和 Cookie
+            print("正在建立访问环境...")
+            page.goto("https://www.bilibili.com", wait_until="networkidle", timeout=60000)
+            time.sleep(random.uniform(2, 4))
 
-            # 2. 拦截并监听 B 站的搜索接口请求
-            # B 站页面滚动或加载时会调用 arc/search 接口
-            # 我们直接从页面 DOM 中提取初步数据，或者通过 API 拦截
+            # 2. 第二步：跳转到目标空间，模拟真实轨迹
+            space_url = f"https://space.bilibili.com/{BILI_UID}/video"
+            print(f"正在访问空间: {space_url}")
+            page.goto(space_url, wait_until="networkidle", timeout=60000)
             
-            # 尝试直接通过 API 抓取（在有 Cookie 语境下）
+            # 模拟随机滚动，触发数据加载
+            page.mouse.wheel(0, 500)
+            time.sleep(random.uniform(3, 6))
+
+            # 3. 第三步：在浏览器上下文执行 API 请求（此时带有完整的 Web 指纹和 Cookie）
             api_url = f"https://api.bilibili.com/x/space/arc/search?mid={BILI_UID}&ps=30&tid=0&pn=1&order=pubdate"
+            print("正在提取接口数据...")
             
-            # 使用 page.evaluate 借用浏览器的 session 发起请求
-            response_data = page.evaluate(f"""
-                fetch("{api_url}").then(res => res.json())
-            """)
+            # 尝试多次抓取
+            for attempt in range(3):
+                response_data = page.evaluate(f"""
+                    fetch("{api_url}").then(res => res.json())
+                """)
 
-            if response_data.get('code') == 0:
-                vlist = response_data['data']['list']['vlist']
-                for v in vlist:
-                    videos.append({
-                        "title": v['title'],
-                        "bvid": v['bvid'],
-                        "created": v['created'],
-                        "play": v['play'],
-                        "comment": v['video_review'],
-                        "like": 0 # 稍后同步详情
-                    })
-                print(f"成功抓取到 {len(videos)} 个视频")
-            else:
-                print(f"浏览器内请求接口失败: {response_data.get('message')}")
-                # 备用方案：尝试从 DOM 节点解析（MediaCrawler 逻辑）
-                video_elements = page.query_selector_all(".list-item")
-                if video_elements:
-                    print(f"尝试从页面元素解析，发现 {len(video_elements)} 个列表项")
-                    # 这里可以添加更复杂的解析逻辑
+                if response_data.get('code') == 0:
+                    vlist = response_data['data']['list']['vlist']
+                    for v in vlist:
+                        videos.append({
+                            "title": v['title'],
+                            "bvid": v['bvid'],
+                            "created": v['created'],
+                            "play": v['play'],
+                            "comment": v['video_review'],
+                            "like": 0
+                        })
+                    print(f"抓取成功：获取到 {len(videos)} 个视频")
+                    break
+                elif response_data.get('code') == -412:
+                    print(f"尝试 {attempt + 1}: 仍被风控 (412)，正在变换策略...")
+                    time.sleep(5)
+                    page.reload()
+                    time.sleep(5)
+                else:
+                    print(f"接口返回非预期结果: {response_data.get('message')}")
+                    break
         
         except Exception as e:
-            print(f"浏览器运行异常: {e}")
+            print(f"浏览器执行过程中发生异常: {e}")
         finally:
             browser.close()
 
-    # 3. 同步点赞详情（使用 requests 配合随机延时）
+    # 4. 获取详细统计数据 (增加更真实的 Headers)
     if videos:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
-        print("正在获取详细统计数据...")
-        for video in videos[:20]: # 优先处理最新的 20 条
+        print("正在同步点赞等详细数据...")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            "Referer": f"https://space.bilibili.com/{BILI_UID}/video"
+        }
+        for video in videos[:15]: # 限制前15个，减少请求频率
             try:
                 stat_url = f"https://api.bilibili.com/x/web-interface/archive/stat?bvid={video['bvid']}"
                 res = requests.get(stat_url, headers=headers, timeout=10).json()
                 if res.get('code') == 0:
                     video['like'] = res['data']['like']
                     video['play'] = res['data']['view']
-                time.sleep(1.5)
+                time.sleep(random.uniform(1.0, 2.5)) # 随机间隔
             except:
                 continue
 
@@ -94,7 +109,7 @@ def send_dingtalk_msg(content):
     if not DINGTALK_WEBHOOK: return
     data = {
         "msgtype": "text",
-        "text": {"content": f"【XMODhub 监控预警】\n{content}\n点赞增长表现优异，请及时复盘！"}
+        "text": {"content": f"【XMODhub 监控预警】\n{content}\n点赞增长表现活跃，建议复盘内容策略！"}
     }
     try:
         requests.post(DINGTALK_WEBHOOK, json=data, timeout=10)
@@ -119,26 +134,33 @@ def generate_html(videos, error_info=""):
     <body class="bg-slate-50 p-4 md:p-8">
         <div class="max-w-6xl mx-auto">
             <div class="bg-white rounded-2xl shadow-sm p-6 mb-6 border border-slate-200">
-                <h1 class="text-2xl font-bold text-slate-800 tracking-tight">XMODhub 视频监控</h1>
-                <p class="text-slate-500 mt-2 text-sm">账户 UID: {BILI_UID} | 最后同步: {now.strftime('%Y-%m-%d %H:%M:%S')}</p>
-                {f'<div class="mt-4 p-3 bg-red-50 text-red-600 rounded-lg text-xs">状态提示: {error_info}</div>' if error_info else '<div class="mt-4 p-3 bg-green-50 text-green-700 rounded-lg text-xs font-medium">● 数据实时同步中</div>'}
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h1 class="text-2xl font-bold text-slate-800 tracking-tight">XMODhub 视频监控</h1>
+                        <p class="text-slate-500 mt-1 text-sm font-medium">账户 UID: {BILI_UID} | 更新周期: 每小时</p>
+                    </div>
+                    <div class="text-right text-xs text-slate-400">
+                        最后同步: {now.strftime('%H:%M:%S')}
+                    </div>
+                </div>
+                {f'<div class="mt-4 p-4 bg-amber-50 border border-amber-100 text-amber-700 rounded-xl text-xs flex items-center">⚠️ {error_info}</div>' if error_info else '<div class="mt-4 p-4 bg-emerald-50 border border-emerald-100 text-emerald-700 rounded-xl text-xs font-semibold flex items-center"><span class="w-2 h-2 bg-emerald-500 rounded-full mr-2 animate-pulse"></span> 系统运行正常，数据已实时同步</div>'}
             </div>
             
-            <div class="flex gap-2 mb-6 overflow-x-auto pb-2">
-                <button onclick="render('all')" id="btn-all" class="px-4 py-2 rounded-xl bg-blue-600 text-white whitespace-nowrap shadow-md transition-all hover:bg-blue-700">全部</button>
-                <button onclick="render('7')" id="btn-7" class="px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-600 whitespace-nowrap hover:bg-slate-50">7天内</button>
-                <button onclick="render('30')" id="btn-30" class="px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-600 whitespace-nowrap hover:bg-slate-50">30天内</button>
+            <div class="flex gap-3 mb-6 overflow-x-auto pb-2 no-scrollbar">
+                <button onclick="render('all')" id="btn-all" class="px-5 py-2.5 rounded-xl bg-slate-900 text-white whitespace-nowrap shadow-lg text-sm transition-all">全部视频</button>
+                <button onclick="render('7')" id="btn-7" class="px-5 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 whitespace-nowrap hover:bg-slate-50 text-sm transition-all">最近 7 天</button>
+                <button onclick="render('30')" id="btn-30" class="px-5 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 whitespace-nowrap hover:bg-slate-50 text-sm transition-all">最近 30 天</button>
             </div>
 
-            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+            <div class="bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden">
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse">
-                        <thead class="bg-slate-50/50 border-b border-slate-100 text-slate-500 text-xs uppercase tracking-wider">
-                            <tr>
-                                <th class="p-4 font-semibold">发布时间</th>
-                                <th class="p-4 font-semibold">内容详情</th>
-                                <th class="p-4 font-semibold text-right">播放量</th>
-                                <th class="p-4 font-semibold text-right">点赞</th>
+                        <thead>
+                            <tr class="bg-slate-50/80 text-slate-500 text-[11px] uppercase tracking-widest border-b border-slate-100">
+                                <th class="p-5 font-bold">发布日期</th>
+                                <th class="p-5 font-bold">视频标题</th>
+                                <th class="p-5 font-bold text-right">总播放量</th>
+                                <th class="p-5 font-bold text-right">当前点赞</th>
                             </tr>
                         </thead>
                         <tbody id="vBody" class="divide-y divide-slate-50 text-slate-700"></tbody>
@@ -157,9 +179,10 @@ def generate_html(videos, error_info=""):
                 body.innerHTML = '';
                 
                 document.querySelectorAll('button').forEach(b => {{
-                    b.className = "px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-600 whitespace-nowrap hover:bg-slate-50 transition-all";
+                    b.className = "px-5 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-600 whitespace-nowrap hover:bg-slate-50 text-sm transition-all";
                 }});
-                document.getElementById('btn-' + filter).className = "px-4 py-2 rounded-xl bg-blue-600 text-white whitespace-nowrap shadow-md font-medium";
+                const activeBtn = document.getElementById('btn-' + filter);
+                activeBtn.className = "px-5 py-2.5 rounded-xl bg-slate-900 text-white whitespace-nowrap shadow-lg text-sm transition-all";
 
                 const filtered = rawData.filter(v => {{
                     if(filter === '7') return v.created >= t7;
@@ -168,18 +191,20 @@ def generate_html(videos, error_info=""):
                 }});
 
                 if(filtered.length === 0) {{
-                    body.innerHTML = '<tr><td colspan="4" class="p-12 text-center text-slate-400">暂无数据，请稍后刷新</td></tr>';
+                    body.innerHTML = '<tr><td colspan="4" class="p-20 text-center text-slate-300 font-medium italic">暂未抓取到有效视频数据...</td></tr>';
                     return;
                 }}
 
                 filtered.forEach(v => {{
                     const date = new Date(v.created * 1000).toLocaleDateString();
                     body.innerHTML += `
-                        <tr class="hover:bg-slate-50/80 transition-colors">
-                            <td class="p-4 text-xs text-slate-400 font-mono">${{date}}</td>
-                            <td class="p-4"><a href="https://www.bilibili.com/video/${{v.bvid}}" target="_blank" class="text-blue-600 hover:text-blue-800 font-medium line-clamp-1">${{v.title}}</a></td>
-                            <td class="p-4 text-right font-mono text-sm">${{v.play.toLocaleString()}}</td>
-                            <td class="p-4 text-right font-mono text-orange-600 font-bold">${{v.like.toLocaleString()}}</td>
+                        <tr class="hover:bg-slate-50/50 transition-colors group">
+                            <td class="p-5 text-xs text-slate-400 font-mono italic">${{date}}</td>
+                            <td class="p-5">
+                                <a href="https://www.bilibili.com/video/${{v.bvid}}" target="_blank" class="text-slate-800 group-hover:text-blue-600 font-semibold line-clamp-1 transition-colors">${{v.title}}</a>
+                            </td>
+                            <td class="p-5 text-right font-mono text-sm text-slate-500">${{v.play.toLocaleString()}}</td>
+                            <td class="p-5 text-right font-mono text-base text-orange-500 font-black tracking-tighter">${{v.like.toLocaleString()}}</td>
                         </tr>
                     `;
                 }});
@@ -204,20 +229,20 @@ def monitor_logic(current_videos):
                 if v['bvid'] in old_map:
                     diff = v['like'] - old_map[v['bvid']]
                     if diff >= LIKE_THRESHOLD:
-                        send_dingtalk_msg(f"视频标题：{v['title']}\\n当前点赞：{v['like']}\\n本周期新增：{diff}")
+                        send_dingtalk_msg(f"视频：{v['title']}\\n当前点赞：{v['like']}\\n周期新增：{diff}")
         except Exception as e:
-            print(f"历史对比失败: {e}")
+            print(f"历史数据对比异常: {e}")
             
     with open(history_file, "w", encoding="utf-8") as f:
         json.dump(current_videos, f, ensure_ascii=False)
 
 if __name__ == "__main__":
-    # 使用浏览器模拟模式抓取
     videos = get_video_list_with_browser()
     
     if not videos:
-        generate_html([], error_info="[风控警报] B站响应了 412 拦截或空数据。建议尝试在 Actions 脚本中更换 IP 区域。")
+        # 如果依然失败，显示更具体的建议
+        generate_html([], error_info="[风控拦截] B 站当前拒绝了来自数据中心的自动抓取请求。这通常与 IP 区域有关。系统将继续在下个整点尝试。")
     else:
         monitor_logic(videos)
         generate_html(videos)
-        print("脚本成功结束。")
+        print("所有流程已执行成功。")
