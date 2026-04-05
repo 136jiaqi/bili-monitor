@@ -1,0 +1,82 @@
+
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>XMODhub 视频监控看板</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+    <body class="bg-slate-50 p-4 md:p-8">
+        <div class="max-w-6xl mx-auto">
+            <div class="bg-white rounded-2xl shadow-sm p-6 mb-6 border border-slate-200">
+                <h1 class="text-2xl font-bold text-slate-800">XMODhub 视频推广看板</h1>
+                <p class="text-slate-500 mt-2">账户 UID: 31524112 | 更新时间: 2026-04-05 08:24:34</p>
+                <div class="mt-4 p-3 bg-red-50 text-red-600 rounded-lg text-sm">提示: 抓取失败，请检查 UID 或稍后重试。</div>
+            </div>
+            
+            <div class="flex gap-2 mb-6 overflow-x-auto pb-2">
+                <button onclick="render('all')" id="btn-all" class="px-4 py-2 rounded-lg bg-blue-600 text-white whitespace-nowrap">所有视频</button>
+                <button onclick="render('7')" id="btn-7" class="px-4 py-2 rounded-lg bg-white border whitespace-nowrap">近7天</button>
+                <button onclick="render('30')" id="btn-30" class="px-4 py-2 rounded-lg bg-white border whitespace-nowrap">近30天</button>
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-sm border overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead class="bg-slate-50 border-b text-slate-600 text-sm">
+                            <tr>
+                                <th class="p-4 font-semibold">发布日期</th>
+                                <th class="p-4 font-semibold">标题</th>
+                                <th class="p-4 font-semibold text-right">播放</th>
+                                <th class="p-4 font-semibold text-right">点赞</th>
+                                <th class="p-4 font-semibold text-right">评论</th>
+                            </tr>
+                        </thead>
+                        <tbody id="vBody" class="divide-y text-slate-700"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            const rawData = [];
+            const t7 = 1774772674.095324;
+            const t30 = 1772785474.095324;
+
+            function render(filter) {
+                const body = document.getElementById('vBody');
+                body.innerHTML = '';
+                
+                document.querySelectorAll('button').forEach(b => b.className = "px-4 py-2 rounded-lg bg-white border whitespace-nowrap text-slate-600");
+                document.getElementById('btn-' + filter).className = "px-4 py-2 rounded-lg bg-blue-600 text-white whitespace-nowrap";
+
+                const filtered = rawData.filter(v => {
+                    if(filter === '7') return v.created >= t7;
+                    if(filter === '30') return v.created >= t30;
+                    return true;
+                });
+
+                if(filtered.length === 0) {
+                    body.innerHTML = '<tr><td colspan="5" class="p-12 text-center text-slate-400">没有抓取到符合条件的视频数据</td></tr>';
+                    return;
+                }
+
+                filtered.forEach(v => {
+                    const date = new Date(v.created * 1000).toLocaleDateString();
+                    body.innerHTML += `
+                        <tr class="hover:bg-slate-50">
+                            <td class="p-4 text-sm text-slate-400">${date}</td>
+                            <td class="p-4"><a href="https://www.bilibili.com/video/${v.bvid}" target="_blank" class="text-blue-600 hover:underline line-clamp-1">${v.title}</a></td>
+                            <td class="p-4 text-right font-mono">${v.play.toLocaleString()}</td>
+                            <td class="p-4 text-right font-mono text-orange-600 font-bold">${v.like.toLocaleString()}</td>
+                            <td class="p-4 text-right font-mono">${v.comment.toLocaleString()}</td>
+                        </tr>
+                    `;
+                });
+            }
+            render('all');
+        </script>
+    </body>
+    </html>
+    
