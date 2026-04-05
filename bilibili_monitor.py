@@ -5,10 +5,10 @@ import os
 from datetime import datetime, timedelta
 
 # ================= 从 GitHub Secrets 安全读取 =================
-# os.environ.get 会自动从 GitHub 的运行环境中抓取你刚才设置的 Secret
+# 确保你已经在 GitHub Settings -> Secrets -> Actions 中配置了这两个变量
 BILI_UID = os.environ.get("BILI_UID")
 DINGTALK_WEBHOOK = os.environ.get("DINGTALK_WEBHOOK")
-LIKE_THRESHOLD = 50  # 预警阈值：每小时点赞增加超过50则报警
+LIKE_THRESHOLD = 50  # 预警阈值：点赞一小时增长超过此数值则报警
 # ============================================================
 
 def get_video_list():
@@ -19,17 +19,21 @@ def get_video_list():
         
     videos = []
     page = 1
+    # 模拟浏览器请求头，降低被 B 站拦截的风险
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Referer": f"https://space.bilibili.com/{BILI_UID}"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Referer": f"https://space.bilibili.com/{BILI_UID}",
+        "Origin": "https://space.bilibili.com"
     }
 
-    while True:
-        # 使用B站空间搜索接口获取视频列表
-        url = f"https://api.bilibili.com/x/space/wbi/arc/search?mid={BILI_UID}&ps=30&tid=0&pn={page}&keyword=&order=pubdate"
-        try:
-            response = requests.get(url, headers=headers).json()
-            if response['code'] == 0:
+    try:
+        while True:
+            # 尝试抓取视频列表接口
+            url = f"https://api.bilibili.com/x/space/wbi/arc/search?mid={BILI_UID}&ps=30&tid=0&pn={page}&keyword=&order=pubdate"
+            print(f"正在抓取第 {page} 页视频列表...")
+            response = requests.get(url, headers=headers, timeout=10).json()
+            
+            if response.get('code') == 0:
                 vlist = response['data']['list']['vlist']
                 if not vlist:
                     break
@@ -40,46 +44,48 @@ def get_video_list():
                         "created": v['created'],
                         "play": v['play'],
                         "comment": v['video_review'],
-                        "like": 0
+                        "like": 0  # 初始设为0，稍后获取详情
                     })
                 page += 1
-                if page > 10: break # 安全限制，防止死循环
+                if page > 10: break # 最多抓取 10 页，约 300 个视频
+                time.sleep(1) # 强制休眠 1 秒，防止请求过快
             else:
+                print(f"B站接口返回异常: {response.get('message')}")
                 break
-        except Exception as e:
-            print(f"列表抓取异常: {e}")
-            break
+    except Exception as e:
+        print(f"列表抓取过程中发生网络异常: {e}")
     
-    # 获取每个视频的详细点赞量
+    # 二次请求：获取每个视频的实时点赞量
+    print(f"列表获取完成，共有 {len(videos)} 个视频，开始获取点赞详情...")
     for video in videos:
         try:
             detail_url = f"https://api.bilibili.com/x/web-interface/archive/stat?bvid={video['bvid']}"
-            res = requests.get(detail_url, headers=headers).json()
-            if res['code'] == 0:
+            res = requests.get(detail_url, headers=headers, timeout=10).json()
+            if res.get('code') == 0:
                 video['like'] = res['data']['like']
-            time.sleep(0.3) # 稍微加长间隔，防止被封IP
+            time.sleep(0.5) # 详情接口请求间隔
         except:
             continue
         
     return videos
 
 def send_dingtalk_msg(content):
-    """发送钉钉通知"""
+    """发送钉钉机器人通知"""
     if not DINGTALK_WEBHOOK:
         print("警告：未配置钉钉 Webhook，跳过通知")
         return
         
     data = {
         "msgtype": "text",
-        "text": {"content": f"【视频监控预警】\n{content}\n该追加相关内容了！"}
+        "text": {"content": f"【XMODhub 监控预警】\n{content}\n该视频点赞增长较快，请关注并考虑追加相关内容！"}
     }
     try:
-        requests.post(DINGTALK_WEBHOOK, json=data)
+        requests.post(DINGTALK_WEBHOOK, json=data, timeout=10)
     except Exception as e:
         print(f"钉钉发送失败: {e}")
 
-def generate_html(videos):
-    """生成看板 HTML 文件"""
+def generate_html(videos, error_msg=""):
+    """生成静态看板 HTML 文件"""
     now = datetime.now()
     seven_days_ago = (now - timedelta(days=7)).timestamp()
     thirty_days_ago = (now - timedelta(days=30)).timestamp()
@@ -90,42 +96,42 @@ def generate_html(videos):
     <html lang="zh-CN">
     <head>
         <meta charset="UTF-8">
-        <title>XMODhub 推广看板</title>
-        <style>
-            body {{ font-family: sans-serif; background: #f0f2f5; padding: 20px; }}
-            .card {{ background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
-            .btn-group {{ margin: 20px 0; }}
-            button {{ padding: 8px 16px; margin-right: 10px; cursor: pointer; border: 1px solid #d9d9d9; background: #fff; border-radius: 4px; }}
-            button.active {{ background: #1890ff; color: white; border-color: #1890ff; }}
-            table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
-            th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #f0f0f0; }}
-            th {{ background: #fafafa; }}
-            a {{ color: #1890ff; text-decoration: none; }}
-        </style>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>XMODhub 视频监控看板</title>
+        <script src="https://cdn.tailwindcss.com"></script>
     </head>
-    <body>
-        <div class="card">
-            <h1>XMODhub 视频数据看板</h1>
-            <p>数据 UID: {BILI_UID} | 更新时间: {now.strftime('%Y-%m-%d %H:%M:%S')}</p>
+    <body class="bg-slate-50 p-4 md:p-8">
+        <div class="max-w-6xl mx-auto">
+            <div class="bg-white rounded-2xl shadow-sm p-6 mb-6 border border-slate-200">
+                <h1 class="text-2xl font-bold text-slate-800">XMODhub 视频推广监控看板</h1>
+                <p class="text-slate-500 mt-2">监控账户 UID: {BILI_UID} | 自动更新时间: {now.strftime('%Y-%m-%d %H:%M:%S')}</p>
+                {f'<p class="text-red-500 mt-2 font-bold bg-red-50 p-2 rounded">⚠️ 运行提示: {error_msg}</p>' if error_msg else ''}
+            </div>
             
-            <div class="btn-group">
-                <button id="btn-all" onclick="render('all')">所有视频</button>
-                <button id="btn-7" onclick="render('7')">近7天</button>
-                <button id="btn-30" onclick="render('30')">近30天</button>
+            <div class="flex flex-wrap gap-2 mb-6">
+                <button onclick="render('all')" id="btn-all" class="px-5 py-2 rounded-lg bg-blue-600 text-white font-medium shadow-sm transition-all hover:bg-blue-700">所有视频</button>
+                <button onclick="render('7')" id="btn-7" class="px-5 py-2 rounded-lg bg-white text-slate-600 border border-slate-200 font-medium hover:bg-slate-50">仅监控近 7 天</button>
+                <button onclick="render('30')" id="btn-30" class="px-5 py-2 rounded-lg bg-white text-slate-600 border border-slate-200 font-medium hover:bg-slate-50">仅监控近 30 天</button>
             </div>
 
-            <table id="vTable">
-                <thead>
-                    <tr>
-                        <th>发布日期</th>
-                        <th>标题</th>
-                        <th>播放量</th>
-                        <th>点赞</th>
-                        <th>评论</th>
-                    </tr>
-                </thead>
-                <tbody id="vBody"></tbody>
-            </table>
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-slate-50 text-slate-600 text-sm">
+                                <th class="p-4 font-semibold">发布日期</th>
+                                <th class="p-4 font-semibold">视频标题</th>
+                                <th class="p-4 font-semibold text-right">播放量</th>
+                                <th class="p-4 font-semibold text-right">点赞</th>
+                                <th class="p-4 font-semibold text-right">评论</th>
+                            </tr>
+                        </thead>
+                        <tbody id="vBody" class="text-slate-700 divide-y divide-slate-100">
+                            <!-- 数据由 JS 渲染 -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <script>
@@ -137,58 +143,8 @@ def generate_html(videos):
                 const body = document.getElementById('vBody');
                 body.innerHTML = '';
                 
-                // 切换按钮样式
-                document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-                document.getElementById('btn-' + filter).classList.add('active');
-
-                const filtered = rawData.filter(v => {{
-                    if(filter === '7') return v.created >= t7;
-                    if(filter === '30') return v.created >= t30;
-                    return true;
+                // 重置按钮样式
+                document.querySelectorAll('button').forEach(b => {{
+                    b.className = "px-5 py-2 rounded-lg bg-white text-slate-600 border border-slate-200 font-medium hover:bg-slate-50";
                 }});
-
-                filtered.forEach(v => {{
-                    const date = new Date(v.created * 1000).toLocaleDateString();
-                    body.innerHTML += `<tr>
-                        <td>${{date}}</td>
-                        <td><a href="https://www.bilibili.com/video/${{v.bvid}}" target="_blank">${{v.title}}</a></td>
-                        <td>${{v.play.toLocaleString()}}</td>
-                        <td>${{v.like.toLocaleString()}}</td>
-                        <td>${{v.comment.toLocaleString()}}</td>
-                    </tr>`;
-                }});
-            }}
-            render('all');
-        </script>
-    </body>
-    </html>
-    """
-    with open("index.html", "w", encoding="utf-8") as f:
-        f.write(html_template)
-
-def check_and_alert(current_videos):
-    """预警逻辑"""
-    history_file = "history.json"
-    if os.path.exists(history_file):
-        try:
-            with open(history_file, "r", encoding="utf-8") as f:
-                old_list = json.load(f)
-                old_map = {{v['bvid']: v['like'] for v in old_list}}
-            
-            for v in current_videos:
-                if v['bvid'] in old_map:
-                    diff = v['like'] - old_map[v['bvid']]
-                    if diff >= LIKE_THRESHOLD:
-                        send_dingtalk_msg(f"视频：{v['title']}\n新增点赞：{diff}")
-        except:
-            pass
-            
-    with open(history_file, "w", encoding="utf-8") as f:
-        json.dump(current_videos, f, ensure_ascii=False)
-
-if __name__ == "__main__":
-    data = get_video_list()
-    if data:
-        check_and_alert(data)
-        generate_html(data)
-        print("Done!")
+                document.getElementById('btn-' + filter).className = "px-5 py-2 rounded-lg bg
