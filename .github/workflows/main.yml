@@ -16,6 +16,10 @@ jobs:
       - name: Install dependencies
         run: pip install requests
       - name: Run script
+        env:
+          # 这两行是关键：将 Secrets 映射为环境变量
+          BILI_UID: ${{ secrets.BILI_UID }}
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
         run: python bilibili_monitor.py
       - name: Commit files
         run: |
