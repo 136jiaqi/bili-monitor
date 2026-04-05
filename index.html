@@ -10,53 +10,65 @@
     <body class="bg-slate-50 p-4 md:p-8">
         <div class="max-w-6xl mx-auto">
             <div class="bg-white rounded-2xl shadow-sm p-6 mb-6 border border-slate-200">
-                <h1 class="text-2xl font-bold text-slate-800">XMODhub 视频推广看板</h1>
-                <p class="text-slate-500 mt-2">UID: 7206526 | 更新: 2026-04-05 08:36:30</p>
-                <div class="mt-4 p-3 bg-amber-50 text-amber-700 rounded-lg text-sm">提示: 接口访问受限。这通常是 B 站对 GitHub 的临时封锁，系统将在一小时后重试。</div>
+                <h1 class="text-2xl font-bold text-slate-800 tracking-tight">XMODhub 视频监控</h1>
+                <p class="text-slate-500 mt-2 text-sm">账户 UID: 7206526 | 最后同步: 2026-04-05 08:41:04</p>
+                <div class="mt-4 p-3 bg-red-50 text-red-600 rounded-lg text-xs">状态提示: [风控警报] B站响应了 412 拦截或空数据。建议尝试在 Actions 脚本中更换 IP 区域。</div>
             </div>
+            
             <div class="flex gap-2 mb-6 overflow-x-auto pb-2">
-                <button onclick="render('all')" id="btn-all" class="px-4 py-2 rounded-lg bg-blue-600 text-white whitespace-nowrap">所有视频</button>
-                <button onclick="render('7')" id="btn-7" class="px-4 py-2 rounded-lg bg-white border border-slate-200 whitespace-nowrap">近7天</button>
-                <button onclick="render('30')" id="btn-30" class="px-4 py-2 rounded-lg bg-white border border-slate-200 whitespace-nowrap">近30天</button>
+                <button onclick="render('all')" id="btn-all" class="px-4 py-2 rounded-xl bg-blue-600 text-white whitespace-nowrap shadow-md transition-all hover:bg-blue-700">全部</button>
+                <button onclick="render('7')" id="btn-7" class="px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-600 whitespace-nowrap hover:bg-slate-50">7天内</button>
+                <button onclick="render('30')" id="btn-30" class="px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-600 whitespace-nowrap hover:bg-slate-50">30天内</button>
             </div>
+
             <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                <table class="w-full text-left">
-                    <thead class="bg-slate-50 border-b text-slate-600 text-sm">
-                        <tr>
-                            <th class="p-4">发布日期</th>
-                            <th class="p-4">视频标题</th>
-                            <th class="p-4 text-right">播放量</th>
-                            <th class="p-4 text-right">点赞</th>
-                        </tr>
-                    </thead>
-                    <tbody id="vBody" class="divide-y divide-slate-50 text-slate-700"></tbody>
-                </table>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead class="bg-slate-50/50 border-b border-slate-100 text-slate-500 text-xs uppercase tracking-wider">
+                            <tr>
+                                <th class="p-4 font-semibold">发布时间</th>
+                                <th class="p-4 font-semibold">内容详情</th>
+                                <th class="p-4 font-semibold text-right">播放量</th>
+                                <th class="p-4 font-semibold text-right">点赞</th>
+                            </tr>
+                        </thead>
+                        <tbody id="vBody" class="divide-y divide-slate-50 text-slate-700"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
+
         <script>
             const rawData = [];
-            const t7 = 1774773390.278067;
-            const t30 = 1772786190.278067;
+            const t7 = 1774773664.38246;
+            const t30 = 1772786464.38246;
+
             function render(filter) {
                 const body = document.getElementById('vBody');
                 body.innerHTML = '';
-                document.querySelectorAll('button').forEach(b => b.className = "px-4 py-2 rounded-lg bg-white border border-slate-200 text-slate-600 whitespace-nowrap");
-                document.getElementById('btn-' + filter).className = "px-4 py-2 rounded-lg bg-blue-600 text-white whitespace-nowrap font-medium";
+                
+                document.querySelectorAll('button').forEach(b => {
+                    b.className = "px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-600 whitespace-nowrap hover:bg-slate-50 transition-all";
+                });
+                document.getElementById('btn-' + filter).className = "px-4 py-2 rounded-xl bg-blue-600 text-white whitespace-nowrap shadow-md font-medium";
+
                 const filtered = rawData.filter(v => {
                     if(filter === '7') return v.created >= t7;
                     if(filter === '30') return v.created >= t30;
                     return true;
                 });
+
                 if(filtered.length === 0) {
-                    body.innerHTML = '<tr><td colspan="4" class="p-12 text-center text-slate-400">暂无数据</td></tr>';
+                    body.innerHTML = '<tr><td colspan="4" class="p-12 text-center text-slate-400">暂无数据，请稍后刷新</td></tr>';
                     return;
                 }
+
                 filtered.forEach(v => {
                     const date = new Date(v.created * 1000).toLocaleDateString();
                     body.innerHTML += `
-                        <tr class="hover:bg-slate-50">
-                            <td class="p-4 text-sm text-slate-400">${date}</td>
-                            <td class="p-4"><a href="https://www.bilibili.com/video/${v.bvid}" target="_blank" class="text-blue-600 hover:underline line-clamp-1">${v.title}</a></td>
+                        <tr class="hover:bg-slate-50/80 transition-colors">
+                            <td class="p-4 text-xs text-slate-400 font-mono">${date}</td>
+                            <td class="p-4"><a href="https://www.bilibili.com/video/${v.bvid}" target="_blank" class="text-blue-600 hover:text-blue-800 font-medium line-clamp-1">${v.title}</a></td>
                             <td class="p-4 text-right font-mono text-sm">${v.play.toLocaleString()}</td>
                             <td class="p-4 text-right font-mono text-orange-600 font-bold">${v.like.toLocaleString()}</td>
                         </tr>
